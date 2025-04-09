@@ -1,7 +1,7 @@
 //#############################################################################
-// FILE:   HWstarter_AC_main
+// FILE:   HWFinal_main.c
 //
-// TITLE:  ACHW4
+// TITLE:  ACHWFinalProject
 //#############################################################################
 
 // Included Files
@@ -26,12 +26,28 @@
 // The Launchpad's CPU Frequency set to 200 you should not change this value
 #define LAUNCHPAD_CPU_FREQUENCY 200
 
+// AC Define center voltage for joystick
+#define centerVoltage1 1.69482422
+#define centerVoltage2 1.61499023
+// AC Define min and max speeds
+#define minSpeed 0.0 // To be determined
+#define maxSpeed 0.25 // To be determined
+
 
 // Interrupt Service Routines predefinition
 __interrupt void cpu_timer0_isr(void);
 __interrupt void cpu_timer1_isr(void);
 __interrupt void cpu_timer2_isr(void);
 __interrupt void SWI_isr(void);
+
+// AC intialize ADCA_ISR function
+__interrupt void ADCA_ISR(void);
+
+
+// AC Predefine RC Servo functions
+void setEPWM8A_RCServo(float angle);
+void setEPWM8B_RCServo(float angle);
+
 
 // Count variables
 uint32_t numTimer0calls = 0;
@@ -40,40 +56,24 @@ extern uint32_t numRXA;
 uint16_t UARTPrint = 0;
 uint16_t LEDdisplaynum = 0;
 
-// AC Predefine RC Servo functions
-void setEPWM8A_RCServo(float angle);
-void setEPWM8B_RCServo(float angle);
+// AC variables to setup adca for joystick
+int32_t adca_count = 0;   // AC count variable for ADCA_ISR func
+int32_t Adca2result = 0;  // AC raw results of joystick y-axis ADCINA2 input
+int32_t Adca3result = 0;  // AC raw results of joystick x-axis ADCINA3 input
+float ADCINA2_volt = 0.0; // AC volt from joystick y-axis ADCINA2 input
+float ADCINA3_volt = 0.0; // AC volt from joystick x-axis ADCINA3 input
 
 
-// AC Define RC motor counter
-int16_t motorCounter;
-int16_t updown;
-
-volatile uint32_t Xint1Count=0;
-volatile uint32_t Xint2Count=0;
-
-__interrupt void xint1_isr(void);
-__interrupt void xint2_isr(void);
-
-uint16_t readbuttons(void) {
-    uint16_t returnvalue = 0;
-
-    if (GpioDataRegs.GPADAT.bit.GPIO4 == 0) {
-        returnvalue |= 1;
-    }
-    if (GpioDataRegs.GPADAT.bit.GPIO5 == 0) {
-        returnvalue |= 2;
-    }
-    if (GpioDataRegs.GPADAT.bit.GPIO6 == 0) {
-        returnvalue |= 4;
-    }
-    if (GpioDataRegs.GPADAT.bit.GPIO7 == 0) {
-        returnvalue |= 8;
-    }
-
-    return(returnvalue);
-}
-
+// AC Define RC motor counters
+int16_t motorCounter = 0;
+float hingeAngle1 = 0.0;
+float hingeAngle2 = 0.0;
+float deviation1 = 0.0;
+float deviation2 = 0.0;
+float speed_factor1 = 0.0;
+float step_size1 = 0.0;
+float speed_factor2 = 0.0;
+float step_size2 = 0.0;
 
 void main(void)
 {
@@ -282,8 +282,10 @@ void main(void)
     PieVectTable.SCID_TX_INT = &TXDINT_data_sent;
 
     PieVectTable.EMIF_ERROR_INT = &SWI_isr;
-    PieVectTable.XINT1_INT = &xint1_isr;
-    PieVectTable.XINT2_INT = &xint2_isr;
+
+    // AC add to map ADCA1_INT to ADCA_ISR func
+    PieVectTable.ADCA1_INT = &ADCA_ISR;
+
     EDIS;    // This is needed to disable write to EALLOW protected registers
 
 
@@ -313,12 +315,18 @@ void main(void)
     EPwm8Regs.TBCTL.bit.CLKDIV = 4; // AC Clock divide by 16 (100 for 16 in the data sheet) so 50 MHz/16 = 3.125 MHz
 
 
+
+
     // AC set time based counter to 0
     EPwm8Regs.TBCTR = 0;
 
 
+
+
     // AC Set period for 5 kHz
     EPwm8Regs.TBPRD = 62500; //AC 3125000 Hz / 50 Hz = 62500 (max TBPRD is 65535)
+
+
 
 
     // AC Set Compare A register to 50% duty cycle
@@ -327,23 +335,91 @@ void main(void)
 
 
 
+
+
+
     EPwm8Regs.AQCTLA.bit.CAU = 1; //AC set PWM output high when TBCTR = 0
     EPwm8Regs.AQCTLA.bit.ZRO = 2; //AC clear PWM output low when TBCTR = CMPA
+
+
 
 
     EPwm8Regs.AQCTLB.bit.CBU = 1; //AC set PWM output high when TBCTR = 0
     EPwm8Regs.AQCTLB.bit.ZRO = 2; //AC clear PWM output low when TBCTR = CMPB
 
 
+
+
     EPwm8Regs.TBPHS.bit.TBPHS = 0; // AC Set phase zero
 
 
-    // AC disable pull-up resistor
-    EALLOW; // Below are protected registers
-    GpioCtrlRegs.GPAPUD.bit.GPIO22 = 1; // For EPWM12A
+    //AC first code paragraph from HW doc
+    EALLOW;
+    EPwm4Regs.ETSEL.bit.SOCAEN = 0; // Disable SOC on A group
+    EPwm4Regs.TBCTL.bit.CTRMODE = 3; // freeze counter
+    EPwm4Regs.ETSEL.bit.SOCASEL = 2; // Select Event when counter equal to PRD
+    EPwm4Regs.ETPS.bit.SOCAPRD = 1; // Generate pulse on 1st event (“pulse” is the same as “trigger”)
+    EPwm4Regs.TBCTR = 0x0; // Clear counter
+    EPwm4Regs.TBPHS.bit.TBPHS = 0x0000; // Phase is 0
+    EPwm4Regs.TBCTL.bit.PHSEN = 0; // Disable phase loading
+    EPwm4Regs.TBCTL.bit.CLKDIV = 0; // divide by 1 50Mhz Clock
+    EPwm4Regs.TBPRD = 50000; // Set Period to 1ms sample. Input clock is 50MHz.
+    // Notice here that we are not setting CMPA or CMPB because we are not using the PWM signal
+    EPwm4Regs.ETSEL.bit.SOCAEN = 1; //enable SOCA
+    EPwm4Regs.TBCTL.bit.CTRMODE = 0;//unfreeze, and enter up count mode
     EDIS;
 
 
+    // AC second paragraph of code from HW
+    EALLOW;
+    // Write configurations for ADCA
+    AdcaRegs.ADCCTL2.bit.PRESCALE = 6; // Set ADCCLK divider to /4
+    AdcSetMode(ADC_ADCA, ADC_RESOLUTION_12BIT, ADC_SIGNALMODE_SINGLE); // Read calibration settings
+
+
+
+
+    // Set pulse positions to late
+    AdcaRegs.ADCCTL1.bit.INTPULSEPOS = 1;
+
+
+
+
+    // Power up the ADCs
+    AdcaRegs.ADCCTL1.bit.ADCPWDNZ = 1;
+
+
+
+
+    // Delay for 1ms to allow ADC time to power up
+    DELAY_US(1000);
+
+
+    // Select the channels to convert and end of conversion flag
+    // ADCA
+    AdcaRegs.ADCSOC0CTL.bit.CHSEL = 4; // SOC0 will convert Channel ADCINA4
+    AdcaRegs.ADCSOC0CTL.bit.ACQPS = 99; // AC Sample window is acqps + 1 SYSCLK cycles = 500ns
+    AdcaRegs.ADCSOC0CTL.bit.TRIGSEL = 11; // AC SOC0 will begin conversion on EPWM4 ADCSOCA
+
+
+    // AC joystick setup
+    AdcaRegs.ADCSOC1CTL.bit.CHSEL = 2; // AC SOC1 -> ADCINA2 (Joystick X)
+    AdcaRegs.ADCSOC1CTL.bit.ACQPS = 99; // AC Sample window is acqps + 1 SYSCLK cycles = 500ns
+    AdcaRegs.ADCSOC1CTL.bit.TRIGSEL = 11; // AC EPWM4
+
+
+
+
+    AdcaRegs.ADCSOC2CTL.bit.CHSEL = 3; // AC SOC2 -> ADCINA3 (Joystick Y)
+    AdcaRegs.ADCSOC2CTL.bit.ACQPS = 99; // AC Sample window is acqps + 1 SYSCLK cycles = 500ns
+    AdcaRegs.ADCSOC2CTL.bit.TRIGSEL = 11; // AC EPWM4
+
+
+    // AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 0; // AC Set to last or only SOC that is converted and it will set INT1 flag ADCA1
+    AdcaRegs.ADCINTSEL1N2.bit.INT1SEL = 2;  // AC Set INT1 to trigger after SOC2 (Joystick Y)
+    AdcaRegs.ADCINTSEL1N2.bit.INT1E = 1;  // AC Enable INT1 flag
+    AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1; // AC Make sure INT1 flag is cleared
+    EDIS;
 
 
     // Enable CPU int1 which is connected to CPU-Timer 0, CPU int13
@@ -356,35 +432,13 @@ void main(void)
     IER |= M_INT13;
     IER |= M_INT14;
 
-    PieCtrlRegs.PIEIER1.bit.INTx4 = 1;          // Enable PIE Group 1 INT4  Xint1
-    PieCtrlRegs.PIEIER1.bit.INTx5 = 1;          // Enable PIE Group 1 INT5  Xint2
     // Enable TINT0 in the PIE: Group 1 interrupt 7
     PieCtrlRegs.PIEIER1.bit.INTx7 = 1;
     // Enable SWI in the PIE: Group 12 interrupt 9
     PieCtrlRegs.PIEIER12.bit.INTx9 = 1;
 
-    EALLOW;
-    GpioCtrlRegs.GPAQSEL1.bit.GPIO6 = 2;        // XINT1 Qual using 6 samples
-    GpioCtrlRegs.GPACTRL.bit.QUALPRD0 = 0xFF;   // Each sampling window
-
-
-    GpioCtrlRegs.GPAQSEL1.bit.GPIO7 = 2;        // XINT2 Qual using 6 samples
-    GpioCtrlRegs.GPACTRL.bit.QUALPRD0 = 0xFF;   // Each sampling window is 510*SYSCLKOUT
-    EDIS;
-
-    // GPIO4 is XINT1, GPIO5 is XINT2
-    GPIO_SetupXINT1Gpio(6);
-    GPIO_SetupXINT2Gpio(7);
-
-
-    // Configure XINT1 XINT2
-    XintRegs.XINT1CR.bit.POLARITY = 0;          // Falling edge interrupt
-    XintRegs.XINT2CR.bit.POLARITY = 0;          // Falling edge interrupt
-
-
-    // Enable XINT1 and XINT2
-    XintRegs.XINT1CR.bit.ENABLE = 1;            // Enable XINT1
-    XintRegs.XINT2CR.bit.ENABLE = 1;            // Enable XINT2
+    // AC Enable ADCA1 in the PIE: Group 1, Channel 1
+    PieCtrlRegs.PIEIER1.bit.INTx1 = 1;
 
     // Enable global Interrupts and higher priority real-time debug events
     EINT;  // Enable Global interrupt INTM
@@ -395,9 +449,8 @@ void main(void)
     while(1)
     {
         if (UARTPrint == 1 ) {
-            serial_printf(&SerialA,"NumXInt1=%ld,NumXInt2=%ld\r\n",Xint1Count,Xint2Count);
+            serial_printf(&SerialA,"Num Timer2:%ld Num SerialRX: %ld\r\n",CpuTimer2.InterruptCount,numRXA);
             UARTPrint = 0;
-
         }
     }
 }
@@ -433,7 +486,7 @@ __interrupt void cpu_timer0_isr(void)
     //    if ((numTimer0calls%50) == 0) {
     //        PieCtrlRegs.PIEIFR12.bit.INTx9 = 1;  // Manually cause the interrupt for the SWI
     //    }
-
+    //
     //    if ((numTimer0calls%250) == 0) {
     //        displayLEDletter(LEDdisplaynum);
     //        LEDdisplaynum++;
@@ -452,29 +505,6 @@ __interrupt void cpu_timer0_isr(void)
 // cpu_timer1_isr - CPU Timer1 ISR
 __interrupt void cpu_timer1_isr(void)
 {
-
-    if (readbuttons()==0) {
-        // AC increment motorCounter every msecond until the value 90 then decrement it until -90 then repeat
-        if(updown == 1){
-            motorCounter++;
-            if(motorCounter == 90){
-                updown = 0;
-            }
-        }
-        else{
-            motorCounter--;
-            if(motorCounter == -90){
-                updown = 1;
-            }
-        }
-    }
-
-
-
-
-
-    setEPWM8A_RCServo(motorCounter);
-    setEPWM8B_RCServo(motorCounter);
 
 
     CpuTimer1.InterruptCount++;
@@ -495,6 +525,105 @@ __interrupt void cpu_timer2_isr(void)
     }
 }
 
+__interrupt void ADCA_ISR (void)
+{
+    // AC set output of Adca's to variables
+    Adca2result = AdcaResultRegs.ADCRESULT1;
+    Adca3result = AdcaResultRegs.ADCRESULT2;
+
+
+
+
+    // AC scale raw joystick integer to float volatge
+    ADCINA2_volt = 3.0 * Adca2result/4096.0; // AC (joystick y)
+    ADCINA3_volt = 3.0 * Adca3result/4096.0; // AC (joystick x)
+
+
+    // AC joystick logic for hinges
+
+
+    // *****************************//
+
+    // AC First hinge
+    // AC Calculate speed based on deviation from center
+    deviation1 = (ADCINA2_volt - centerVoltage1);  // AC 0 to 1.6
+    speed_factor1 = deviation1 / centerVoltage1;   // AC -1 to 1
+    step_size1 = minSpeed + (speed_factor1 * (maxSpeed - minSpeed));
+
+    // AC zero out step size if Joystick is aproximatley in center
+    if (step_size1 > -0.005 && step_size1 < 0.005) {
+        step_size1 = 0.0;
+    }
+
+
+
+
+    // AC code to saturate hinge angle here
+    if (hingeAngle1 > 90.0) {
+        hingeAngle1 = 90.0;
+    }
+    if (hingeAngle1 < -90.0) {
+        hingeAngle1 = -90.0;
+    }
+
+
+
+    // AC update motor
+    if (adca_count % 1000) {
+        hingeAngle1 += step_size1;
+    }
+    setEPWM8A_RCServo(hingeAngle1);
+
+    // AC Second hinge
+    // AC Calculate speed based on deviation from center
+    deviation2 = (ADCINA3_volt - centerVoltage2);  // AC 0 to 1.6
+    speed_factor2 = deviation2 / centerVoltage2;   // AC -1 to 1
+    step_size2 = minSpeed + (speed_factor2 * (maxSpeed - minSpeed));
+
+    // AC zero out step size if Joystick is aproximatley in center
+    if (step_size2 > -0.005 && step_size2 < 0.005) {
+        step_size2 = 0.0;
+    }
+
+
+
+
+    // AC code to saturate hinge angle here
+    if (hingeAngle2 > 90.0) {
+        hingeAngle2 = 90.0;
+    }
+    if (hingeAngle2 < -90.0) {
+        hingeAngle2 = -90.0;
+    }
+
+
+
+    // AC update motor
+    if (adca_count % 1000) {
+        hingeAngle2 += step_size2;
+    }
+    setEPWM8B_RCServo(hingeAngle2);
+
+    // *****************************//
+
+//    hingeAngle1 = (180.0/3.0)* ADCINA2_volt - 90;
+//    setEPWM8A_RCServo(hingeAngle1);
+
+    // AC increment counter
+    adca_count++;
+
+
+    // AC code to play buzzer noise here
+    //************//
+
+
+    AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1; //clear interrupt flag
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
+}
+
+
+
+
 void setEPWM8A_RCServo(float angle) {
     // Saturate at 90
     if (angle > 90) {
@@ -506,10 +635,14 @@ void setEPWM8A_RCServo(float angle) {
     }
 
 
+
+
     // AC Convert angle to CMPA reading
     // AC 90 -> 62500 * 12% = 7500 and -90 -> 62500 * 4% = 2500
     EPwm8Regs.CMPA.bit.CMPA = ((7500 - 2500)/(90 - (-90))) * angle + 5000;
 }
+
+
 
 
 void setEPWM8B_RCServo(float angle) {
@@ -523,27 +656,13 @@ void setEPWM8B_RCServo(float angle) {
     }
 
 
+
+
     // AC Convert angle to CMPB reading
     // AC 90 -> 62500 * 12% = 7500 and -90 -> 62500 * 4% = 2500
     EPwm8Regs.CMPB.bit.CMPB = ((7500 - 2500)/(90 - (-90))) * angle + 5000;
 
 
-}
 
-// xint1_isr - External Interrupt 1 ISR
-interrupt void xint1_isr(void)
-{
-    Xint1Count++;
 
-    // Acknowledge this interrupt to get more from group 1
-    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
-}
-
-// xint2_isr - External Interrupt 2 ISR
-interrupt void xint2_isr(void)
-{
-    Xint2Count++;
-
-    // Acknowledge this interrupt to get more from group 1
-    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
 }
