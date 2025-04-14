@@ -141,8 +141,8 @@ void main(void)
     InitGpio();
 
     // AC Set buzzer as PWM
-    //    GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 5); // Set GPIO16 as GPIO instead of PWM
-    GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 1); // Set GPIO16 as GPIO as not PWM for exercises 4 and 5
+    GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 5); // Set GPIO16 as GPIO instead of PWM
+//    GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 1); // Set GPIO16 as GPIO as not PWM for exercises 4 and 5
     GPIO_SetupPinOptions(16, GPIO_OUTPUT, GPIO_PUSHPULL); // AC configure as output
     GpioDataRegs.GPASET.bit.GPIO16 = 1; // AC Set low
 
@@ -515,16 +515,17 @@ __interrupt void cpu_timer1_isr(void)
     //        GpioDataRegs.GPASET.bit.GPIO16 = 1; // AC Set low
     //    }
 
+if (playSong == 1) {
+        if (CpuTimer1.InterruptCount < nokiaLength) {
+            EPwm9Regs.TBPRD = nokiaMelody[CpuTimer1.InterruptCount]; // AC change the period to period of song notes
+        }
 
-    //    if (CpuTimer1.InterruptCount < nokiaLength) {
-    //        EPwm9Regs.TBPRD = nokiaMelody[CpuTimer1.InterruptCount]; // AC change the period to period of song notes
-    //    }
-    //
-    //    else {
-    //        GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 0); // Set GPIO16 as GPIO instead of PWM
-    //        GPIO_SetupPinOptions(16, GPIO_OUTPUT, GPIO_PUSHPULL); // AC configure as output
-    //        GpioDataRegs.GPASET.bit.GPIO16 = 1; // AC Set low
-    //    }
+        else {
+            GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 0); // Set GPIO16 as GPIO instead of PWM
+            GPIO_SetupPinOptions(16, GPIO_OUTPUT, GPIO_PUSHPULL); // AC configure as output
+            GpioDataRegs.GPASET.bit.GPIO16 = 1; // AC Set low
+        }
+}
 
     CpuTimer1.InterruptCount++;
 }

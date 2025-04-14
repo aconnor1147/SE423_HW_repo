@@ -33,6 +33,33 @@
 #define minSpeed 0.0 // To be determined
 #define maxSpeed 0.25 // To be determined
 
+// AC Define notes for song
+#define C4_NOTE 47778 // AC C4 is 261.63 Hz so 25 MHz / (2 * 261.63) = 47778
+#define D4_NOTE 42566
+#define E4_NOTE 37922
+#define F4_NOTE 35789
+#define G4_NOTE 31888
+#define A4_NOTE 28409
+#define FS4_NOTE 33860  // 25MHz / (2 * 369.99 Hz)
+#define GS4_NOTE 30189  // 25MHz / (2 * 415.30 Hz)
+#define CS5_NOTE 22606  // 25MHz / (2 * 554.37 Hz)
+#define B4_NOTE 25252   // 25MHz / (2 * 493.88 Hz)
+#define CS4_NOTE 45018  // 25MHz / (2 * 277.18 Hz)
+#define E5_NOTE 18958  // 25MHz / (2 * 659.25 Hz)
+#define D5_NOTE 21204  // 25MHz / (2 * 587.33 Hz)
+
+#define nokiaLength 25  // AC
+
+uint16_t nokiaMelody[nokiaLength] = {
+                                     E5_NOTE, E5_NOTE, D5_NOTE, D5_NOTE,
+                                     FS4_NOTE, FS4_NOTE, GS4_NOTE, GS4_NOTE,
+                                     CS5_NOTE, CS5_NOTE, B4_NOTE, B4_NOTE,
+                                     D4_NOTE, D4_NOTE, E4_NOTE, E4_NOTE,
+                                     B4_NOTE, B4_NOTE, A4_NOTE, A4_NOTE,
+                                     CS4_NOTE, CS4_NOTE, E4_NOTE, E4_NOTE,
+                                     A4_NOTE, A4_NOTE
+};
+
 
 // Interrupt Service Routines predefinition
 __interrupt void cpu_timer0_isr(void);
@@ -74,6 +101,7 @@ float speed_factor1 = 0.0;
 float step_size1 = 0.0;
 float speed_factor2 = 0.0;
 float step_size2 = 0.0;
+int32_t soundCount = 0;
 
 void main(void)
 {
@@ -82,6 +110,12 @@ void main(void)
     InitSysCtrl();
 
     InitGpio();
+
+    // AC Set buzzer as PWM
+    GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 5); // Set GPIO16 as GPIO instead of PWM
+    //    GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 1); // Set GPIO16 as GPIO as not PWM for exercises 4 and 5
+    GPIO_SetupPinOptions(16, GPIO_OUTPUT, GPIO_PUSHPULL); // AC configure as output
+    GpioDataRegs.GPASET.bit.GPIO16 = 1; // AC Set low
 
     // Blue LED on LaunchPad
     GPIO_SetupPinMux(31, GPIO_MUX_CPU1, 0);
@@ -352,6 +386,31 @@ void main(void)
 
     EPwm8Regs.TBPHS.bit.TBPHS = 0; // AC Set phase zero
 
+    // AC four lines: Count up, Free Soft, Free run and clock divide by 1
+    EPwm9Regs.TBCTL.bit.CTRMODE = 0; //AC set count up mode
+    EPwm9Regs.TBCTL.bit.FREE_SOFT = 2; // AC Free run
+    EPwm9Regs.TBCTL.bit.PHSEN = 0; // AC Disable phase loading
+    EPwm9Regs.TBCTL.bit.CLKDIV = 1; // AC Clock divide by 2
+
+
+    // AC set time based counter to 0
+    EPwm9Regs.TBCTR = 0;
+
+
+    // AC Set period for 5 kHz
+    EPwm9Regs.TBPRD = 10000; //AC 50 MHz / 5 kHz = 10000
+
+
+    // AC Set Compare A register to 50% duty cycle
+    //EPwm9Regs.CMPA.bit.CMPA = 5000; // AC 10000/2 = 5000
+
+
+    EPwm9Regs.AQCTLA.bit.CAU = 0;  // AC Do nothing when CMPA is reached (since we're not using CMPA)
+    EPwm9Regs.AQCTLA.bit.ZRO = 3;  // AC Toggle the output when the counter reaches zero
+
+
+    EPwm9Regs.TBPHS.bit.TBPHS = 0; // AC Set phase zero
+
 
     //AC first code paragraph from HW doc
     EALLOW;
@@ -589,8 +648,8 @@ __interrupt void ADCA_ISR (void)
 
 
     // AC code to saturate hinge angle here
-    if (hingeAngle2 > 90.0) {
-        hingeAngle2 = 90.0;
+    if (hingeAngle2 > 10.0) {
+        hingeAngle2 = 10.0;
     }
     if (hingeAngle2 < -90.0) {
         hingeAngle2 = -90.0;
@@ -602,19 +661,45 @@ __interrupt void ADCA_ISR (void)
     if (adca_count % 1000) {
         hingeAngle2 += step_size2;
     }
-    setEPWM8B_RCServo(hingeAngle2);
+    setEPWM8B_RCServo(-hingeAngle2);
 
     // *****************************//
 
-//    hingeAngle1 = (180.0/3.0)* ADCINA2_volt - 90;
-//    setEPWM8A_RCServo(hingeAngle1);
+    //    hingeAngle1 = (180.0/3.0)* ADCINA2_volt - 90;
+    //    setEPWM8A_RCServo(hingeAngle1);
+
+
+
+    if(hingeAngle2 == -90) {
+        if (soundCount < nokiaLength) {
+            // AC Set buzzer as PWM
+            GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 5); // Set GPIO16 as GPIO instead of PWM
+            GPIO_SetupPinOptions(16, GPIO_OUTPUT, GPIO_PUSHPULL); // AC configure as output
+            GpioDataRegs.GPASET.bit.GPIO16 = 1; // AC Set low
+//            EPwm9Regs.TBPRD = E5_NOTE;
+        }
+
+        else {
+            GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 0); // Set GPIO16 as GPIO instead of PWM
+            GPIO_SetupPinOptions(16, GPIO_OUTPUT, GPIO_PUSHPULL); // AC configure as output
+            GpioDataRegs.GPASET.bit.GPIO16 = 1; // AC Set low
+            soundCount = 0;
+        }
+        if ((adca_count % 125) == 0) {
+            EPwm9Regs.TBPRD = nokiaMelody[soundCount]; // AC change the period to period of song notes
+            soundCount++;
+        }
+
+    }
+    else {
+                GPIO_SetupPinMux(16, GPIO_MUX_CPU1, 0); // Set GPIO16 as GPIO instead of PWM
+                GPIO_SetupPinOptions(16, GPIO_OUTPUT, GPIO_PUSHPULL); // AC configure as output
+                GpioDataRegs.GPASET.bit.GPIO16 = 1; // AC Set low
+                soundCount = 0;
+            }
 
     // AC increment counter
-    adca_count++;
-
-
-    // AC code to play buzzer noise here
-    //************//
+     adca_count++;
 
 
     AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1; //clear interrupt flag
