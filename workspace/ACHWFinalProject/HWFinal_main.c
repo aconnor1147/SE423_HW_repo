@@ -33,7 +33,7 @@
 #define minSpeed 0.0 // To be determined
 #define maxSpeed 0.25 // To be determined
 
-// AC Define notes for song
+// AC Define the notes for song
 #define C4_NOTE 47778 // AC C4 is 261.63 Hz so 25 MHz / (2 * 261.63) = 47778
 #define D4_NOTE 42566
 #define E4_NOTE 37922
@@ -417,7 +417,7 @@ void main(void)
     EPwm4Regs.ETSEL.bit.SOCAEN = 0; // Disable SOC on A group
     EPwm4Regs.TBCTL.bit.CTRMODE = 3; // freeze counter
     EPwm4Regs.ETSEL.bit.SOCASEL = 2; // Select Event when counter equal to PRD
-    EPwm4Regs.ETPS.bit.SOCAPRD = 1; // Generate pulse on 1st event (“pulse” is the same as “trigger”)
+    EPwm4Regs.ETPS.bit.SOCAPRD = 1; // Generate pulse on 1st event (Â“pulseÂ” is the same as Â“triggerÂ”)
     EPwm4Regs.TBCTR = 0x0; // Clear counter
     EPwm4Regs.TBPHS.bit.TBPHS = 0x0000; // Phase is 0
     EPwm4Regs.TBCTL.bit.PHSEN = 0; // Disable phase loading
